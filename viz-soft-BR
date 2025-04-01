@@ -5,58 +5,79 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Strategic Equivalence Visualization</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
+    body { font-family: Arial, sans-serif; margin: 20px; display: flex; gap: 40px; }
     table { border-collapse: collapse; margin-bottom: 20px; }
     td, th { border: 1px solid #ccc; padding: 10px; text-align: center; }
     .controls { margin-bottom: 20px; }
-    .highlight { background-color: #d0f0d0; }
+    .soft-highlight { background: linear-gradient(to right, rgba(255, 255, 0, 0.2), rgba(255, 255, 0, 0.2)); }
+    .hard-highlight { background: linear-gradient(to right, rgba(255, 0, 0, 0.2), rgba(255, 0, 0, 0.2)); }
+    .sidebar { min-width: 250px; }
+    .sec-box { padding: 10px; margin-bottom: 10px; border: 1px solid #ccc; }
   </style>
 </head>
 <body>
-  <h1>Strategic Equivalence Relation (SER) in Matrix Game</h1>
+  <main>
+    <h1>Strategic Equivalence Relation (SER) in Matrix Game</h1>
 
-  <p>
-    This interactive game visualizes how an ego agent's best response changes as it learns from interactions with various partner policies.
-    Toggle options below to observe the shift from hard best response (BR) to soft best response (Soft BR).
-  </p>
+    <p>
+      This interactive game visualizes how an ego agent's best response changes as it learns from interactions with various partner policies.
+      The Hard BR is the pure best response, while the Soft BR is a stochastic response computed using a softmax with a temperature parameter τ.
+    </p>
 
-  <div class="controls">
-    <label>
-      <input type="checkbox" id="toggleSoftBR" /> Show Soft Best Response
-    </label><br>
-    <label>
-      <input type="range" id="partnerCount" min="1" max="5" value="1" /> Number of Partner Policies Encountered: <span id="partnerCountValue">1</span>
-    </label>
-  </div>
+    <div class="controls">
+      <label>
+        <input type="range" id="partnerCount" min="1" max="100" value="1" /> Number of Partner Policies Encountered: <span id="partnerCountValue">1</span>
+      </label><br>
+      <label>
+        <input type="range" id="evolutionRounds" min="1" max="200" value="1" /> Evolution Rounds: <span id="evolutionRoundsValue">1</span>
+      </label><br>
+      <label>
+        τ (Softmax Temperature): <input type="number" id="tau" min="0.01" step="0.01" value="0.5" style="width: 60px;" />
+      </label>
+      <small>Lower τ makes Soft BR closer to Hard BR. Higher τ flattens preferences.</small>
+    </div>
 
-  <table>
-    <thead>
-      <tr>
-        <th></th>
-        <th>Cooperate</th>
-        <th>Defect</th>
-      </tr>
-    </thead>
-    <tbody id="payoffMatrix"></tbody>
-  </table>
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>Cooperate</th>
+          <th>Defect</th>
+        </tr>
+      </thead>
+      <tbody id="payoffMatrix"></tbody>
+    </table>
 
-  <h3>Best Response Strategy</h3>
-  <p id="brDisplay"></p>
+    <h3>Best Response Strategy</h3>
+    <p id="hardBrDisplay"></p>
+    <p id="softBrDisplay"></p>
+    <p id="softBrSampleDisplay"></p>
+  </main>
+
+  <aside class="sidebar">
+    <h3>SEC Map</h3>
+    <div class="sec-box">
+      <strong>Hard SEC:</strong>
+      <p id="hardSEC"></p>
+    </div>
+    <div class="sec-box">
+      <strong>Soft SEC:</strong>
+      <p id="softSEC"></p>
+    </div>
+    <div class="sec-box">
+      <strong>Soft SEC Similarity (KL):</strong>
+      <p id="softSECSimilarity"></p>
+    </div>
+
+  </aside>
 
   <script>
     const matrix = {
       Cooperate: { Cooperate: [3, 3], Defect: [0, 5] },
-      Defect: { Cooperate: [5, 0], Defect: [1, 1] },
+      Defect: { Cooperate: [5, 0], Defect: [-3, -3] },
     };
 
-    const partnerPolicies = [
-      [0.8, 0.2], // mostly cooperate
-      [0.5, 0.5], // neutral
-      [0.3, 0.7], // mostly defect
-      [0.1, 0.9], // strong defector
-      [1.0, 0.0]  // pure cooperator
-    ];
-
+    const partnerPolicies = Array.from({ length: 100 }, (_, i) => [1 - i * 0.01, i * 0.01]);
     const actions = ['Cooperate', 'Defect'];
 
     function softmax(values, tau = 0.5) {
@@ -64,6 +85,16 @@
       const expVals = values.map(v => Math.exp((v - max) / tau));
       const sum = expVals.reduce((a, b) => a + b, 0);
       return expVals.map(v => v / sum);
+    }
+
+    function sampleFromDist(dist) {
+      const r = Math.random();
+      let acc = 0;
+      for (let i = 0; i < dist.length; i++) {
+        acc += dist[i];
+        if (r < acc) return i;
+      }
+      return dist.length - 1;
     }
 
     function expectedPayoffs(mix) {
@@ -75,20 +106,31 @@
     }
 
     function update() {
-      const useSoft = document.getElementById('toggleSoftBR').checked;
       const count = parseInt(document.getElementById('partnerCount').value);
+      const rounds = parseInt(document.getElementById('evolutionRounds').value);
+      const tau = parseFloat(document.getElementById('tau').value);
       document.getElementById('partnerCountValue').innerText = count;
+      document.getElementById('evolutionRoundsValue').innerText = rounds;
 
       const mixes = partnerPolicies.slice(0, count);
-      const aggregated = mixes.map(([c, d]) => [c, d]);
-
-      const averageMix = aggregated.reduce((acc, [c, d]) => [acc[0] + c, acc[1] + d], [0, 0]).map(v => v / count);
-      const expVals = expectedPayoffs([averageMix]);
+      const averageMix = mixes.reduce((acc, [c, d]) => [acc[0] + c, acc[1] + d], [0, 0]).map(v => v / count);
+      const evolvedMixes = Array(rounds).fill().map(() => averageMix);
+      const expVals = expectedPayoffs(evolvedMixes);
+      const softBR = softmax(expVals, tau);
 
       const tbody = document.getElementById('payoffMatrix');
       tbody.innerHTML = '';
 
-      actions.forEach(a1 => {
+      const maxVal = Math.max(...expVals);
+      const hardBrIndex = expVals.indexOf(maxVal);
+      const softBrMax = Math.max(...softBR);
+      const softBrIndices = softBR.map((v, i) => v === softBrMax);
+      const softSampleIndex = sampleFromDist(softBR);
+
+      let hardSECset = [];
+      let softSECset = [];
+
+      actions.forEach((a1, i) => {
         const row = document.createElement('tr');
         const th = document.createElement('th');
         th.innerText = a1;
@@ -98,22 +140,47 @@
           cell.innerText = matrix[a1][a2][0] + ', ' + matrix[a1][a2][1];
           row.appendChild(cell);
         });
+        if (i === hardBrIndex) {
+          row.classList.add('hard-highlight');
+          hardSECset.push(a1);
+        }
+        if (softBrIndices[i]) {
+          row.classList.add('soft-highlight');
+          softSECset.push(a1);
+        }
         tbody.appendChild(row);
       });
 
-      const brOutput = document.getElementById('brDisplay');
-      if (useSoft) {
-        const probs = softmax(expVals);
-        brOutput.innerText = `Soft BR (tau = 0.5): Cooperate = ${probs[0].toFixed(2)}, Defect = ${probs[1].toFixed(2)}`;
-      } else {
-        const maxVal = Math.max(...expVals);
-        const br = actions[expVals.indexOf(maxVal)];
-        brOutput.innerText = `Hard BR: ${br}`;
+      const hardBr = actions[hardBrIndex];
+      const softBrSample = actions[softSampleIndex];
+
+      function klDivergence(p, q) {
+        return p.reduce((sum, pi, i) => {
+          if (pi === 0) return sum;
+          return sum + pi * Math.log(pi / (q[i] || 1e-10));
+        }, 0);
       }
+      
+      const klScores = mixes.map(([c, d]) => {
+        const br = expectedPayoffs([[c, d]]);
+        const brSoft = softmax(br, tau);
+        return klDivergence(softBR, brSoft);
+      });
+      
+      const avgKL = klScores.reduce((a, b) => a + b, 0) / klScores.length;
+      const similarityScore = Math.max(0, 1 - avgKL).toFixed(3);
+      document.getElementById('softSECSimilarity').innerText = `1 - KL = ${similarityScore}`;
+
+      document.getElementById('hardBrDisplay').innerText = `Hard BR: ${hardBr}`;
+      document.getElementById('softBrDisplay').innerText = `Soft BR (τ = ${tau}): Cooperate = ${softBR[0].toFixed(2)}, Defect = ${softBR[1].toFixed(2)}`;
+      document.getElementById('softBrSampleDisplay').innerText = `Ego Agent Sampled Action (Soft BR): ${softBrSample}`;
+      document.getElementById('hardSEC').innerText = `[${hardSECset.join(', ')}]`;
+      document.getElementById('softSEC').innerText = `[${softSECset.join(', ')}]`;
     }
 
-    document.getElementById('toggleSoftBR').addEventListener('change', update);
     document.getElementById('partnerCount').addEventListener('input', update);
+    document.getElementById('evolutionRounds').addEventListener('input', update);
+    document.getElementById('tau').addEventListener('input', update);
     update();
   </script>
 </body>
