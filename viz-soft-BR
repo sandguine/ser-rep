@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Strategic Equivalence Visualization</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    table { border-collapse: collapse; margin-bottom: 20px; }
+    td, th { border: 1px solid #ccc; padding: 10px; text-align: center; }
+    .controls { margin-bottom: 20px; }
+    .highlight { background-color: #d0f0d0; }
+  </style>
+</head>
+<body>
+  <h1>Strategic Equivalence Relation (SER) in Matrix Game</h1>
+
+  <p>
+    This interactive game visualizes how an ego agent's best response changes as it learns from interactions with various partner policies.
+    Toggle options below to observe the shift from hard best response (BR) to soft best response (Soft BR).
+  </p>
+
+  <div class="controls">
+    <label>
+      <input type="checkbox" id="toggleSoftBR" /> Show Soft Best Response
+    </label><br>
+    <label>
+      <input type="range" id="partnerCount" min="1" max="5" value="1" /> Number of Partner Policies Encountered: <span id="partnerCountValue">1</span>
+    </label>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th></th>
+        <th>Cooperate</th>
+        <th>Defect</th>
+      </tr>
+    </thead>
+    <tbody id="payoffMatrix"></tbody>
+  </table>
+
+  <h3>Best Response Strategy</h3>
+  <p id="brDisplay"></p>
+
+  <script>
+    const matrix = {
+      Cooperate: { Cooperate: [3, 3], Defect: [0, 5] },
+      Defect: { Cooperate: [5, 0], Defect: [1, 1] },
+    };
+
+    const partnerPolicies = [
+      [0.8, 0.2], // mostly cooperate
+      [0.5, 0.5], // neutral
+      [0.3, 0.7], // mostly defect
+      [0.1, 0.9], // strong defector
+      [1.0, 0.0]  // pure cooperator
+    ];
+
+    const actions = ['Cooperate', 'Defect'];
+
+    function softmax(values, tau = 0.5) {
+      const max = Math.max(...values);
+      const expVals = values.map(v => Math.exp((v - max) / tau));
+      const sum = expVals.reduce((a, b) => a + b, 0);
+      return expVals.map(v => v / sum);
+    }
+
+    function expectedPayoffs(mix) {
+      return actions.map(a => {
+        return mix.reduce((sum, [c, d]) => {
+          return sum + c * matrix[a].Cooperate[0] + d * matrix[a].Defect[0];
+        }, 0);
+      });
+    }
+
+    function update() {
+      const useSoft = document.getElementById('toggleSoftBR').checked;
+      const count = parseInt(document.getElementById('partnerCount').value);
+      document.getElementById('partnerCountValue').innerText = count;
+
+      const mixes = partnerPolicies.slice(0, count);
+      const aggregated = mixes.map(([c, d]) => [c, d]);
+
+      const averageMix = aggregated.reduce((acc, [c, d]) => [acc[0] + c, acc[1] + d], [0, 0]).map(v => v / count);
+      const expVals = expectedPayoffs([averageMix]);
+
+      const tbody = document.getElementById('payoffMatrix');
+      tbody.innerHTML = '';
+
+      actions.forEach(a1 => {
+        const row = document.createElement('tr');
+        const th = document.createElement('th');
+        th.innerText = a1;
+        row.appendChild(th);
+        actions.forEach(a2 => {
+          const cell = document.createElement('td');
+          cell.innerText = matrix[a1][a2][0] + ', ' + matrix[a1][a2][1];
+          row.appendChild(cell);
+        });
+        tbody.appendChild(row);
+      });
+
+      const brOutput = document.getElementById('brDisplay');
+      if (useSoft) {
+        const probs = softmax(expVals);
+        brOutput.innerText = `Soft BR (tau = 0.5): Cooperate = ${probs[0].toFixed(2)}, Defect = ${probs[1].toFixed(2)}`;
+      } else {
+        const maxVal = Math.max(...expVals);
+        const br = actions[expVals.indexOf(maxVal)];
+        brOutput.innerText = `Hard BR: ${br}`;
+      }
+    }
+
+    document.getElementById('toggleSoftBR').addEventListener('change', update);
+    document.getElementById('partnerCount').addEventListener('input', update);
+    update();
+  </script>
+</body>
+</html>
